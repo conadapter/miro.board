@@ -1,0 +1,559 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Интерактивная доска</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'JetBrains Mono', monospace;
+    background: #f0f0f0;
+    color: #111;
+    overflow: hidden;
+    height: 100vh;
+    width: 100vw;
+    user-select: none;
+  }
+
+  #toolbar {
+    position: fixed;
+    top: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 10px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.12);
+  }
+
+  .tool-btn {
+    background: transparent;
+    border: none;
+    color: #888;
+    cursor: pointer;
+    padding: 7px 12px;
+    border-radius: 8px;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 10px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    transition: all 0.12s;
+    min-width: 50px;
+  }
+  .tool-btn svg { width: 17px; height: 17px; }
+  .tool-btn:hover { background: #f0f0f0; color: #111; }
+  .tool-btn.active { background: #111; color: #fff; }
+
+  .sep { width: 1px; height: 28px; background: #ddd; margin: 0 3px; }
+
+  #canvas-wrap {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+  }
+
+  #canvas {
+    position: absolute;
+    width: 6000px;
+    height: 4000px;
+    transform-origin: 0 0;
+    background-image: radial-gradient(circle, #ccc 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  #svg-layer {
+    position: absolute;
+    inset: 0;
+    width: 6000px;
+    height: 4000px;
+    pointer-events: none;
+    overflow: visible;
+  }
+
+  .arrow-path {
+    fill: none;
+    stroke: #111;
+    stroke-width: 2;
+    stroke-linecap: round;
+    pointer-events: visibleStroke;
+    cursor: pointer;
+  }
+  .arrow-path.hovered { stroke: #c00; }
+  .arrow-path.selected { stroke: #c00; stroke-width: 2.5; }
+
+  .arrow-preview {
+    fill: none;
+    stroke: #555;
+    stroke-width: 2;
+    stroke-dasharray: 7 4;
+    pointer-events: none;
+  }
+
+  .node {
+    position: absolute;
+    min-width: 130px;
+    background: #fff;
+    border: 1.5px solid #bbb;
+    border-radius: 8px;
+    padding: 10px 13px;
+    cursor: grab;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.10);
+    transition: border-color 0.12s, box-shadow 0.12s;
+  }
+  .node:hover { border-color: #111; }
+  .node.selected { border-color: #111; box-shadow: 0 0 0 2px rgba(0,0,0,.15), 0 2px 8px rgba(0,0,0,.10); }
+  .node.arrow-target { border-color: #090 !important; box-shadow: 0 0 0 3px rgba(0,170,0,.25) !important; }
+
+  .node-text {
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 12px;
+    color: #111;
+    outline: none;
+    width: 100%;
+    background: transparent;
+    border: none;
+    resize: none;
+    overflow: hidden;
+    line-height: 1.5;
+    cursor: text;
+    min-height: 18px;
+  }
+
+  .node-del {
+    position: absolute;
+    top: -7px; right: -7px;
+    width: 16px; height: 16px;
+    background: #c00;
+    border: 2px solid #f0f0f0;
+    border-radius: 50%;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    font-size: 9px;
+    color: #fff;
+    z-index: 20;
+    line-height: 1;
+  }
+  .node.selected .node-del { display: flex; }
+
+  #status {
+    position: fixed;
+    bottom: 14px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    padding: 5px 14px;
+    font-size: 10px;
+    color: #888;
+    pointer-events: none;
+    z-index: 1000;
+    white-space: nowrap;
+    font-family: 'JetBrains Mono', monospace;
+  }
+
+  #zoom-ind {
+    position: fixed;
+    bottom: 14px;
+    right: 14px;
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 7px;
+    padding: 5px 11px;
+    font-size: 10px;
+    color: #888;
+    z-index: 1000;
+    font-family: 'JetBrains Mono', monospace;
+  }
+</style>
+</head>
+<body>
+
+<div id="toolbar">
+  <button class="tool-btn active" id="btn-select" onclick="setTool('select')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 3l14 9-7 2-2 7z"/></svg>
+    ВЫБОР
+  </button>
+  <button class="tool-btn" id="btn-node" onclick="setTool('node')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="5" width="18" height="14" rx="3"/><line x1="8" y1="12" x2="16" y2="12"/></svg>
+    БЛОК
+  </button>
+  <button class="tool-btn" id="btn-arrow" onclick="setTool('arrow')">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="13 6 19 12 13 18"/></svg>
+    СТРЕЛКА
+  </button>
+  <div class="sep"></div>
+  <button class="tool-btn" onclick="deleteSelected()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/></svg>
+    УДАЛИТЬ
+  </button>
+  <div class="sep"></div>
+  <button class="tool-btn" onclick="resetView()">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 1018 0"/><polyline points="3 12 7 8 11 12"/></svg>
+    СБРОС
+  </button>
+</div>
+
+<div id="canvas-wrap">
+  <div id="canvas">
+    <svg id="svg-layer">
+      <defs>
+        <marker id="arr" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#111"/>
+        </marker>
+        <marker id="arr-red" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#c00"/>
+        </marker>
+        <marker id="arr-pre" markerWidth="8" markerHeight="6" refX="7" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#555"/>
+        </marker>
+      </defs>
+    </svg>
+  </div>
+</div>
+
+<div id="status">ВЫБОР — тяни блок чтобы переместить, двойной клик на доске — новый блок</div>
+<div id="zoom-ind">100%</div>
+
+<script>
+const wrap   = document.getElementById('canvas-wrap');
+const canvas = document.getElementById('canvas');
+const svgEl  = document.getElementById('svg-layer');
+const status = document.getElementById('status');
+const zoomEl = document.getElementById('zoom-ind');
+
+let tool = 'select';
+let nodes = [];
+let arrows = [];
+let nid = 0, aid = 0;
+
+let panX = 0, panY = 0, scale = 1;
+let panning = false, panStart = null;
+let dragging = false, dragId = null, dragOff = null;
+
+let drawing = false;
+let drawFrom = null;
+let preview = null;
+
+let selNode = null;
+let selArrow = null;
+
+// ── transform ──────────────────────────────────────────
+function applyT() {
+  canvas.style.transform = `translate(${panX}px,${panY}px) scale(${scale})`;
+  zoomEl.textContent = Math.round(scale * 100) + '%';
+}
+function toC(cx, cy) {
+  return { x: (cx - panX) / scale, y: (cy - panY) / scale };
+}
+
+// ── tool ───────────────────────────────────────────────
+function setTool(t) {
+  tool = t;
+  document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('btn-' + t).classList.add('active');
+  cancelDraw();
+  const h = {
+    select: 'ВЫБОР — тяни блок чтобы переместить · двойной клик — новый блок',
+    node:   'БЛОК — кликни на доску для создания блока',
+    arrow:  'СТРЕЛКА — зажми мышь на блоке-источнике и тяни до блока-цели'
+  };
+  status.textContent = h[t];
+}
+
+// ── nodes ─────────────────────────────────────────────
+function mkNode(x, y, txt = 'Новый блок') {
+  const id = 'n' + (nid++);
+  const el = document.createElement('div');
+  el.className = 'node';
+  el.id = id;
+  el.style.left = x + 'px';
+  el.style.top  = y + 'px';
+
+  const ta = document.createElement('textarea');
+  ta.className = 'node-text';
+  ta.value = txt;
+  ta.rows = 1;
+  ta.spellcheck = false;
+  ta.addEventListener('input', () => {
+    ta.style.height = 'auto';
+    ta.style.height = ta.scrollHeight + 'px';
+    redrawFor(id);
+  });
+  // stop propagation so textarea doesn't trigger drag/arrow
+  ta.addEventListener('pointerdown', e => e.stopPropagation());
+
+  const del = document.createElement('div');
+  del.className = 'node-del';
+  del.textContent = '×';
+  del.addEventListener('pointerdown', e => { e.stopPropagation(); rmNode(id); });
+
+  el.appendChild(ta);
+  el.appendChild(del);
+  el.addEventListener('pointerdown', e => nodeDown(e, id));
+
+  canvas.appendChild(el);
+  nodes.push({ id, x, y, el });
+  selNode = id;
+  el.classList.add('selected');
+  setTimeout(() => { ta.focus(); ta.select(); }, 30);
+  return id;
+}
+
+function getNode(id) { return nodes.find(n => n.id === id); }
+
+function deselect() {
+  selNode = null;
+  nodes.forEach(n => n.el.classList.remove('selected'));
+  if (selArrow) {
+    const a = getArrow(selArrow);
+    if (a) { a.el.classList.remove('selected'); a.el.setAttribute('marker-end','url(#arr)'); }
+    selArrow = null;
+  }
+}
+
+function selectNode(id) {
+  deselect();
+  selNode = id;
+  const n = getNode(id);
+  if (n) n.el.classList.add('selected');
+}
+
+function rmNode(id) {
+  const n = getNode(id);
+  if (n) n.el.remove();
+  nodes = nodes.filter(n => n.id !== id);
+  arrows = arrows.filter(a => {
+    if (a.fromId === id || a.toId === id) { a.el.remove(); return false; }
+    return true;
+  });
+  if (selNode === id) selNode = null;
+}
+
+function deleteSelected() {
+  if (selNode) rmNode(selNode);
+  else if (selArrow) {
+    const a = getArrow(selArrow);
+    if (a) a.el.remove();
+    arrows = arrows.filter(a => a.id !== selArrow);
+    selArrow = null;
+  }
+}
+
+// ── geometry ──────────────────────────────────────────
+function center(id) {
+  const n = getNode(id);
+  if (!n) return null;
+  return { x: n.x + n.el.offsetWidth / 2, y: n.y + n.el.offsetHeight / 2 };
+}
+
+// point on node border in direction of (tx,ty)
+function border(id, tx, ty) {
+  const n = getNode(id);
+  if (!n) return null;
+  const hw = n.el.offsetWidth / 2, hh = n.el.offsetHeight / 2;
+  const cx = n.x + hw, cy = n.y + hh;
+  const dx = tx - cx, dy = ty - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+  let t = (Math.abs(dx) * hh > Math.abs(dy) * hw)
+        ? hw / Math.abs(dx)
+        : hh / Math.abs(dy);
+  return { x: cx + dx * t, y: cy + dy * t };
+}
+
+function qPath(p1, p2) {
+  const mx = (p1.x + p2.x) / 2 - (p2.y - p1.y) * 0.12;
+  const my = (p1.y + p2.y) / 2 + (p2.x - p1.x) * 0.12;
+  return `M${p1.x},${p1.y} Q${mx},${my} ${p2.x},${p2.y}`;
+}
+
+// ── arrows ────────────────────────────────────────────
+function getArrow(id) { return arrows.find(a => a.id === id); }
+
+function mkArrow(fromId, toId) {
+  if (fromId === toId) return null;
+  const id = 'a' + (aid++);
+  const el = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  el.id = id;
+  el.classList.add('arrow-path');
+  el.setAttribute('marker-end', 'url(#arr)');
+  el.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    deselect();
+    selArrow = id;
+    el.classList.add('selected');
+    el.setAttribute('marker-end','url(#arr-red)');
+  });
+  el.addEventListener('pointerenter', () => { if (selArrow !== id) el.classList.add('hovered'); });
+  el.addEventListener('pointerleave', () => el.classList.remove('hovered'));
+  svgEl.appendChild(el);
+  const rec = { id, fromId, toId, el };
+  arrows.push(rec);
+  refreshArrow(id);
+  return id;
+}
+
+function refreshArrow(id) {
+  const a = getArrow(id);
+  if (!a) return;
+  const c1 = center(a.fromId), c2 = center(a.toId);
+  if (!c1 || !c2) return;
+  const p1 = border(a.fromId, c2.x, c2.y);
+  const p2 = border(a.toId,   c1.x, c1.y);
+  a.el.setAttribute('d', qPath(p1, p2));
+}
+
+function redrawFor(id) {
+  arrows.forEach(a => { if (a.fromId === id || a.toId === id) refreshArrow(a.id); });
+}
+
+// ── draw mode ─────────────────────────────────────────
+function startDraw(fromId) {
+  drawing = true;
+  drawFrom = fromId;
+  preview = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+  preview.classList.add('arrow-preview');
+  preview.setAttribute('marker-end', 'url(#arr-pre)');
+  svgEl.appendChild(preview);
+  status.textContent = 'Тяни до другого блока и отпусти мышь';
+}
+
+function moveDraw(tx, ty) {
+  if (!preview || !drawFrom) return;
+  const p1 = border(drawFrom, tx, ty);
+  if (p1) preview.setAttribute('d', qPath(p1, { x: tx, y: ty }));
+  // highlight hovered target
+  nodes.forEach(n => n.el.classList.remove('arrow-target'));
+  const t = hitNode(tx, ty, drawFrom);
+  if (t) getNode(t).el.classList.add('arrow-target');
+}
+
+function endDraw(tx, ty) {
+  nodes.forEach(n => n.el.classList.remove('arrow-target'));
+  const target = hitNode(tx, ty, drawFrom);
+  if (target) {
+    mkArrow(drawFrom, target);
+    status.textContent = '✓ Стрелка создана';
+  } else {
+    status.textContent = 'Отпустите над другим блоком чтобы соединить';
+  }
+  cancelDraw();
+  setTimeout(() => { if (tool === 'arrow') status.textContent = 'СТРЕЛКА — зажми мышь на блоке-источнике и тяни до блока-цели'; }, 1500);
+}
+
+function cancelDraw() {
+  if (preview) { preview.remove(); preview = null; }
+  drawing = false;
+  drawFrom = null;
+  nodes.forEach(n => n.el.classList.remove('arrow-target'));
+}
+
+function hitNode(x, y, exclude) {
+  for (let i = nodes.length - 1; i >= 0; i--) {
+    const n = nodes[i];
+    if (n.id === exclude) continue;
+    const w = n.el.offsetWidth, h = n.el.offsetHeight;
+    if (x >= n.x && x <= n.x + w && y >= n.y && y <= n.y + h) return n.id;
+  }
+  return null;
+}
+
+// ── node pointer down ─────────────────────────────────
+function nodeDown(e, id) {
+  if (e.target.classList.contains('node-del')) return;
+  if (e.target.classList.contains('node-text')) return;
+  e.stopPropagation();
+  e.preventDefault();
+
+  if (tool === 'arrow') {
+    startDraw(id);
+    return;
+  }
+
+  selectNode(id);
+  dragging = true;
+  dragId = id;
+  const n = getNode(id);
+  const cp = toC(e.clientX, e.clientY);
+  dragOff = { x: cp.x - n.x, y: cp.y - n.y };
+}
+
+// ── canvas events ─────────────────────────────────────
+wrap.addEventListener('pointerdown', e => {
+  const bg = e.target === wrap || e.target === canvas || e.target === svgEl || e.target.tagName === 'svg' || e.target.tagName === 'path';
+  if (!bg) return;
+
+  if (drawing) { cancelDraw(); return; }
+
+  const cp = toC(e.clientX, e.clientY);
+  if (tool === 'node') { mkNode(cp.x - 65, cp.y - 24); return; }
+  if (tool === 'select') { deselect(); panning = true; panStart = { x: e.clientX - panX, y: e.clientY - panY }; }
+});
+
+wrap.addEventListener('dblclick', e => {
+  if (e.target === wrap || e.target === canvas || e.target === svgEl || e.target.tagName === 'svg') {
+    const cp = toC(e.clientX, e.clientY);
+    mkNode(cp.x - 65, cp.y - 24);
+  }
+});
+
+window.addEventListener('pointermove', e => {
+  if (panning) { panX = e.clientX - panStart.x; panY = e.clientY - panStart.y; applyT(); }
+  if (dragging && dragId) {
+    const n = getNode(dragId), cp = toC(e.clientX, e.clientY);
+    if (n) { n.x = cp.x - dragOff.x; n.y = cp.y - dragOff.y; n.el.style.left = n.x + 'px'; n.el.style.top = n.y + 'px'; redrawFor(dragId); }
+  }
+  if (drawing) { const cp = toC(e.clientX, e.clientY); moveDraw(cp.x, cp.y); }
+});
+
+window.addEventListener('pointerup', e => {
+  if (drawing) { const cp = toC(e.clientX, e.clientY); endDraw(cp.x, cp.y); }
+  panning = false; dragging = false; dragId = null;
+});
+
+wrap.addEventListener('wheel', e => {
+  e.preventDefault();
+  const f = e.deltaY < 0 ? 1.08 : 0.93;
+  const ns = Math.min(Math.max(scale * f, 0.15), 3);
+  const r = wrap.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  panX = mx - (mx - panX) * (ns / scale);
+  panY = my - (my - panY) * (ns / scale);
+  scale = ns; applyT();
+}, { passive: false });
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') { cancelDraw(); setTool('select'); }
+  if ((e.key === 'Delete' || e.key === 'Backspace') && document.activeElement.tagName !== 'TEXTAREA') deleteSelected();
+});
+
+function resetView() { panX = 0; panY = 0; scale = 1; applyT(); }
+
+// ── demo ──────────────────────────────────────────────
+window.addEventListener('load', () => {
+  panX = wrap.offsetWidth / 2 - 500;
+  panY = wrap.offsetHeight / 2 - 160;
+  applyT();
+  const n1 = mkNode(500, 250, 'Начало темы');
+  const n2 = mkNode(800, 150, 'Подтема A');
+  const n3 = mkNode(800, 360, 'Подтема B');
+  const n4 = mkNode(1100, 250, 'Итог');
+  deselect();
+  setTimeout(() => { mkArrow(n1,n2); mkArrow(n1,n3); mkArrow(n2,n4); mkArrow(n3,n4); }, 60);
+});
+</script>
+</body>
+</html>
